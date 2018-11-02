@@ -5,7 +5,7 @@ from keras.layers import Dense
 from keras.layers import Dropout
 from keras.layers import Flatten
 from keras.constraints import maxnorm
-from keras.optimizers import SGD
+from keras.optimizers import SGD, Adam
 from keras.layers.convolutional import Conv2D
 from keras.layers.convolutional import MaxPooling2D
 from keras.layers.normalization import BatchNormalization
@@ -14,10 +14,12 @@ from keras.utils import np_utils
 from keras.layers import Input
 from keras.models import Model
 import keras
-from my_dataset_loaders import load_dataset_RGB
+from my_dataset_loaders import load_dataset
 from keras.callbacks import CSVLogger
+from os import path
 
 print('Imports done')
+evaluation_dir = '/home/himanshu/Documents/Projects/GIT/universal/pysol/evaluation'
 
 # fix random seed for reproducibility
 seed = 7
@@ -25,75 +27,69 @@ numpy.random.seed(seed)
 
 # load data
 print('Loading dataset...')
-X1_train, X2_train, X3_train, y_train, X1_test, X2_test, X3_test, y_test = load_dataset_RGB()
+X_train, y_train, X_test, y_test = load_dataset()
 print('Dataset loaded.')
 
-# Define the vision modules
-s_input = Input(shape=(96, 128, 3))
-# x = Conv2D(64, (3, 3), padding='same', kernel_constraint=maxnorm(3))(s_input)
-x = Conv2D(64, (3, 3), padding='same', kernel_constraint=maxnorm(3))(s_input)
-x = BatchNormalization()(x)
-x = Activation('relu')(x)
-# x = Dropout(0.2)(x)
-x = Conv2D(64, (3, 3), activation='relu', padding='same', kernel_constraint=maxnorm(3))(x)
-x = MaxPooling2D(pool_size=(2, 2))(x)
-x = BatchNormalization()(x)
-x = Conv2D(96, (3, 3), activation='relu', padding='same', kernel_constraint=maxnorm(3))(x)
-x = Conv2D(96, (3, 3), activation='relu', padding='same', kernel_constraint=maxnorm(3))(x)
-x = MaxPooling2D(pool_size=(2, 2))(x)
-x = BatchNormalization()(x)
-x = Conv2D(128, (3, 3), activation='relu', padding='same', kernel_constraint=maxnorm(3))(x)
-x = Conv2D(128, (3, 3), activation='relu', padding='same', kernel_constraint=maxnorm(3))(x)
-x = MaxPooling2D(pool_size=(2, 2))(x)
-x = Flatten()(x)
-x = Dense(256, activation='relu', kernel_constraint=maxnorm(3))(x)
-x = Dropout(0.5)(x)
-x = Dense(256, activation='relu', kernel_constraint=maxnorm(3))(x)
-out = Dropout(0.5)(x)
-print('Model defined.')
+# Normalize inputs from 0-255 to 0.0-1.0
+X_train = X_train.astype('float32')
+X_test = X_test.astype('float32')
+X_train = X_train / 255.0
+X_test = X_test / 255.0
 
-vision_model = Model(s_input, out)
+# One hot encode outputs
+y_train = np_utils.to_categorical(y_train)
+y_test = np_utils.to_categorical(y_test)
+num_classes = y_test.shape[1]    # get number of classes
 
-# Then define the input-apart model
-s_a = Input(shape=(96, 128, 3))
-s_b = Input(shape=(96, 128, 3))
-s_c = Input(shape=(96, 128, 3))
-
-# The vision model will be shared
-out_a = vision_model(s_a)
-out_b = vision_model(s_b)
-out_c = vision_model(s_c)
-
-concatenated = keras.layers.concatenate([out_a, out_b, out_c])
-out = Dense(1, activation='sigmoid')(concatenated)
-
-classification_model = Model([s_a, s_b, s_c], out)
+# Define the model
+model = Sequential()
+# model.add(Conv2D(48, (3, 3), input_shape=(144, 144, 3), padding='same', kernel_constraint=maxnorm(3)))
+model.add(Conv2D(48, (3, 3), input_shape=(144, 144, 3), padding='same'))
+model.add(BatchNormalization())    # using batch_norm, without activation, it works best on linear inputs
+model.add(Activation('relu'))      # apply batch_norm before non-linearity
+# model.add(Dropout(0.2))       # ignored because we want to observe simple behavior
+model.add(Conv2D(48, (3, 3), activation='relu', padding='same'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+model.add(BatchNormalization())    # using batch_norm, without activation, it works best on linear inputs
+model.add(Conv2D(64, (3, 3), activation='relu', padding='same'))
+model.add(Conv2D(64, (3, 3), activation='relu', padding='same'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+model.add(Conv2D(80, (3, 3), activation='relu', padding='same'))
+model.add(Conv2D(80, (3, 3), activation='relu', padding='same'))
+model.add(Conv2D(80, (3, 3), activation='relu', padding='same'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+model.add(Flatten())
+model.add(Dense(512, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(512, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(num_classes, activation='softmax'))
 
 # Compile model
-epochs = 30
+epochs = 32
 lrate = 0.01
 decay = lrate/epochs
-sgd = SGD(lr=lrate, momentum=0.9, decay=decay, nesterov=False)
-classification_model.compile(loss='binary_crossentropy', optimizer=sgd, metrics=['accuracy'])
-print(classification_model.summary())
+# sgd = SGD(lr=lrate, momentum=0.9, decay=decay, nesterov=True)
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+print(model.summary())
 print('Model compiled.')
 
 # Fit the model
 print('Fitting the model...')
-csv_logger = CSVLogger('./evaluation/log.csv', append=True, separator=';')
-history = classification_model.fit([X1_train, X2_train, X3_train], y_train, validation_data=([X1_test, X2_test, X3_test], y_test), epochs=epochs, batch_size=32, verbose=1, callbacks=[csv_logger])
+csv_logger = CSVLogger(path.join(evaluation_dir,'log.csv'), append=True, separator=';')
+history = model.fit(X_train, y_train, validation_data=(X_test, y_test), epochs=epochs, batch_size=32, verbose=1, callbacks=[csv_logger])
 
 # Save model architecture and weights
 # serialize model to JSON
-model_json = classification_model.to_json()
-with open("./evaluation/model.json", "w") as json_file:
+model_json = model.to_json()
+with open(path.join(evaluation_dir,'model.json'), "w") as json_file:
     json_file.write(model_json)
 # serialize weights to HDF5
-classification_model.save_weights("./evaluation/model.h5")
+model.save_weights(path.join(evaluation_dir,'model.h5'))
 print("Model saved to disk")
 
 # Final evaluation of the model
-scores = classification_model.evaluate([X1_test, X2_test, X3_test], y_test, verbose=0)
+scores = model.evaluate(X_test, y_test, verbose=0)
 print("Accuracy: %.2f%%" % (scores[1]*100))
 
 # Visualize the training progress     # keep verbose=1 in model.fit()
@@ -109,7 +105,7 @@ plt.ylabel('Accuracy')
 plt.xlabel('Epoch')
 plt.legend(['Train', 'Test'], loc='upper left')
 # plt.show()
-plt.savefig('./evaluation/Acc.eps', format='eps', dpi=400)
+plt.savefig(path.join(evaluation_dir,'Acc.eps'), format='eps', dpi=400)
 # Plot training & validation loss values
 plt.figure()
 plt.plot(history.history['loss'])
@@ -119,5 +115,5 @@ plt.ylabel('Loss')
 plt.xlabel('Epoch')
 plt.legend(['Train', 'Test'], loc='lower left')
 # plt.show()
-plt.savefig('./evaluation/Loss.eps', format='eps', dpi=400)
+plt.savefig(path.join(evaluation_dir,'Loss.eps'), format='eps', dpi=400)
 print('Plots saved to disk')
