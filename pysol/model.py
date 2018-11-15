@@ -28,6 +28,10 @@ numpy.random.seed(seed)
 # load data
 print('Loading dataset...')
 X_train, y_train, X_test, y_test = load_dataset()
+print('X_train = ', X_train.shape)
+print('y_train = ', y_train.shape)
+print('X_test = ', X_test.shape)
+print('y_test = ', y_test.shape)
 print('Dataset loaded.')
 
 # Normalize inputs from 0-255 to 0.0-1.0
